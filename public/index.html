@@ -5,12 +5,12 @@
   <title>Simple WebRTC + Socket.IO</title>
 </head>
 <body>
-  <h1>WebRTC Video Chat</h1>
+  <h1>Video Chat</h1>
   <video id="local" autoplay muted playsinline></video>
   <video id="remote" autoplay playsinline></video>
   <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
   <script>
-    const socket = io("http://localhost:3000");
+    const socket = io("videotest-production-e5f5.up.railway.app");
     const roomId = "demo-room";
     socket.emit("join", roomId);
 
