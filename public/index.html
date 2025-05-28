@@ -1,4 +1,3 @@
-<!-- index.html -->
 <!DOCTYPE html>
 <html>
 <head>
@@ -8,49 +7,62 @@
   <h1>Video Chat</h1>
   <video id="local" autoplay muted playsinline></video>
   <video id="remote" autoplay playsinline></video>
+
   <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
   <script>
-    const socket = io("https://videotest-production-e5f5.up.railway.app");
+    const socket = io("https://videotest-production-e5f5.up.railway.app"); // include https
     const roomId = "demo-room";
-    socket.emit("join", roomId);
+    const peer = new RTCPeerConnection();
+    let isOfferer = false;
 
     const localVideo = document.getElementById("local");
     const remoteVideo = document.getElementById("remote");
 
-    const peer = new RTCPeerConnection();
-
-    // Exchange ICE candidates
-    peer.onicecandidate = ({ candidate }) => {
-      if (candidate) socket.emit("signal", { roomId, data: { candidate } });
-    };
-
-    // Remote stream handling
-    peer.ontrack = (e) => {
-      remoteVideo.srcObject = e.streams[0];
-    };
-
-    // Get user media and create offer
-    navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then((stream) => {
-      localVideo.srcObject = stream;
-      stream.getTracks().forEach(track => peer.addTrack(track, stream));
-
-      peer.createOffer().then(offer => {
-        peer.setLocalDescription(offer);
-        socket.emit("signal", { roomId, data: { offer } });
-      });
+    socket.on("connect", () => {
+      socket.emit("join", roomId);
     });
 
-    // Handle incoming signals
+    socket.on("initiate", (shouldOffer) => {
+      isOfferer = shouldOffer;
+      startMedia();
+    });
+
+    function startMedia() {
+      navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then((stream) => {
+        localVideo.srcObject = stream;
+        stream.getTracks().forEach(track => peer.addTrack(track, stream));
+
+        if (isOfferer) {
+          peer.createOffer().then(offer => {
+            peer.setLocalDescription(offer);
+            socket.emit("signal", { roomId, data: { offer } });
+          });
+        }
+      });
+    }
+
+    peer.onicecandidate = ({ candidate }) => {
+      if (candidate) {
+        socket.emit("signal", { roomId, data: { candidate } });
+      }
+    };
+
+    peer.ontrack = (event) => {
+      remoteVideo.srcObject = event.streams[0];
+    };
+
     socket.on("signal", async (data) => {
       if (data.offer) {
         await peer.setRemoteDescription(new RTCSessionDescription(data.offer));
+
         const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-        stream.getTracks().forEach(track => peer.addTrack(track, stream));
         localVideo.srcObject = stream;
+        stream.getTracks().forEach(track => peer.addTrack(track, stream));
 
         const answer = await peer.createAnswer();
         await peer.setLocalDescription(answer);
         socket.emit("signal", { roomId, data: { answer } });
+
       } else if (data.answer) {
         await peer.setRemoteDescription(new RTCSessionDescription(data.answer));
       } else if (data.candidate) {
