@@ -10,6 +10,7 @@
 
   <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
   <script>
+    // Connect to Socket.IO server
     const socket = io();
     const localVideo = document.getElementById("local");
     const remoteVideo = document.getElementById("remote");
@@ -17,6 +18,7 @@
     let localStream;
     let isInitiator = false;
 
+    // Set up the RTCPeerConnection with STUN/TURN servers
     const peer = new RTCPeerConnection({
       iceServers: [
         { urls: ["stun:us-turn10.xirsys.com"] },
@@ -35,24 +37,31 @@
       ]
     });
 
+    // Send ICE candidates to the other peer via the server
     peer.onicecandidate = ({ candidate }) => {
       if (candidate) {
         socket.emit("signal", { candidate });
       }
     };
 
+    // When a remote media track is received, show it in the remote video element
     peer.ontrack = (event) => {
       remoteVideo.srcObject = event.streams[0];
     };
 
-    // Get user media
+    // Get access to local camera and microphone
     navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then(stream => {
       localStream = stream;
       localVideo.srcObject = stream;
+
+      // Add local media tracks to the peer connection
       stream.getTracks().forEach(track => peer.addTrack(track, stream));
+
+      // Notify server that this client is ready to be paired
       socket.emit("ready");
     });
 
+    // Called only on the initiating peer to start the offer
     socket.on("initiate", async () => {
       isInitiator = true;
       const offer = await peer.createOffer();
@@ -60,15 +69,19 @@
       socket.emit("signal", { offer });
     });
 
+    // Handle incoming signaling messages: offer, answer, or ICE candidate
     socket.on("signal", async data => {
       if (data.offer) {
+        // Received an offer; set remote description, create an answer, and send it back
         await peer.setRemoteDescription(new RTCSessionDescription(data.offer));
         const answer = await peer.createAnswer();
         await peer.setLocalDescription(answer);
         socket.emit("signal", { answer });
       } else if (data.answer) {
+        // Received answer from the other peer; set as remote description
         await peer.setRemoteDescription(new RTCSessionDescription(data.answer));
       } else if (data.candidate) {
+        // Add received ICE candidate to the connection
         try {
           await peer.addIceCandidate(data.candidate);
         } catch (err) {
