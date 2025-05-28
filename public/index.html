@@ -1,95 +1,83 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Simple WebRTC + Socket.IO</title>
+  <title>Auto-Paired WebRTC Video Chat</title>
 </head>
 <body>
   <h1>Video Chat</h1>
   <video id="local" autoplay muted playsinline></video>
   <video id="remote" autoplay playsinline></video>
+  <div id="status">Connecting...</div>
 
   <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
   <script>
-    const socket = io("https://videotest-production-e5f5.up.railway.app");
-    const roomId = "demo-room";
+    const socket = io();
 
     const localVideo = document.getElementById("local");
     const remoteVideo = document.getElementById("remote");
-    let localStream;
-    let peer;
+    const statusDiv = document.getElementById("status");
+
+    let roomId = null;
     let isOfferer = false;
+    let peer = null;
 
-    socket.emit("join", roomId);
-
-    socket.on("initiate", (shouldOffer) => {
-      console.log("Initiate received. Should offer:", shouldOffer);
-      isOfferer = shouldOffer;
-      startMedia();
+    socket.on("waiting", () => {
+      statusDiv.textContent = "Waiting for a partner to connect...";
     });
 
-    function startMedia() {
-      navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then((stream) => {
-        localStream = stream;
-        localVideo.srcObject = stream;
+    socket.on("initiate", async (offerer, room) => {
+      roomId = room;
+      isOfferer = offerer;
+      statusDiv.textContent = "Partner found! Setting up call...";
 
-        peer = new RTCPeerConnection({
-          iceServers: [
-            { urls: "stun:stun.l.google.com:19302" }
-          ]
-        });
+      peer = new RTCPeerConnection();
 
-        stream.getTracks().forEach(track => peer.addTrack(track, stream));
+      // Exchange ICE candidates
+      peer.onicecandidate = ({ candidate }) => {
+        if (candidate) socket.emit("signal", { roomId, data: { candidate } });
+      };
 
-        peer.ontrack = (event) => {
-          console.log("Remote stream received");
-          remoteVideo.srcObject = event.streams[0];
-        };
+      // Remote stream
+      peer.ontrack = (e) => {
+        remoteVideo.srcObject = e.streams[0];
+      };
 
-        peer.onicecandidate = ({ candidate }) => {
-          console.log("Sending ICE candidate:", candidate);
-          if (candidate) {
-            socket.emit("signal", { roomId, data: { candidate } });
-          }
-        };
+      // Get local media
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      localVideo.srcObject = stream;
+      stream.getTracks().forEach(track => peer.addTrack(track, stream));
 
-        if (isOfferer) {
-          peer.createOffer().then(offer => {
-            return peer.setLocalDescription(offer);
-          }).then(() => {
-            socket.emit("signal", { roomId, data: { offer: peer.localDescription } });
-          }).catch(console.error);
-        }
-      }).catch(err => {
-        console.error("Error accessing media devices.", err);
-      });
-    }
+      if (isOfferer) {
+        // Create offer
+        const offer = await peer.createOffer();
+        await peer.setLocalDescription(offer);
+        socket.emit("signal", { roomId, data: { offer } });
+      }
+    });
 
     socket.on("signal", async (data) => {
-      console.log("Received signal:", data);
+      if (!peer) return;
 
       if (data.offer) {
-        console.log("Received offer");
-        peer.setRemoteDescription(new RTCSessionDescription(data.offer)).then(() => {
-          return navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-        }).then((stream) => {
-          localStream = stream;
-          localVideo.srcObject = stream;
-          stream.getTracks().forEach(track => peer.addTrack(track, stream));
-          return peer.createAnswer();
-        }).then((answer) => {
-          return peer.setLocalDescription(answer);
-        }).then(() => {
-          socket.emit("signal", { roomId, data: { answer: peer.localDescription } });
-        }).catch(console.error);
-
+        await peer.setRemoteDescription(new RTCSessionDescription(data.offer));
+        const answer = await peer.createAnswer();
+        await peer.setLocalDescription(answer);
+        socket.emit("signal", { roomId, data: { answer } });
       } else if (data.answer) {
-        console.log("Received answer");
-        peer.setRemoteDescription(new RTCSessionDescription(data.answer)).catch(console.error);
-
+        await peer.setRemoteDescription(new RTCSessionDescription(data.answer));
       } else if (data.candidate) {
-        console.log("Adding ICE candidate");
-        peer.addIceCandidate(new RTCIceCandidate(data.candidate)).catch(console.error);
+        try {
+          await peer.addIceCandidate(data.candidate);
+        } catch (err) {
+          console.error("Error adding ICE candidate", err);
+        }
       }
+    });
+
+    socket.on("disconnect", () => {
+      statusDiv.textContent = "Disconnected from server.";
+      if (peer) peer.close();
+      peer = null;
     });
   </script>
 </body>

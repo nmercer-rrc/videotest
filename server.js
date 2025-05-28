@@ -2,6 +2,7 @@ const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
 const path = require("path");
+const { v4: uuidv4 } = require("uuid");
 
 const app = express();
 const server = http.createServer(app);
@@ -9,42 +10,51 @@ const io = new Server(server, {
   cors: { origin: "*" },
 });
 
-// Serve static files from the 'public' directory
 app.use(express.static(path.join(__dirname, "public")));
-
-// Fallback route to serve index.html
 app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "public/index.html"));
 });
 
-// Handle socket connections
+let waitingSocket = null;
+
 io.on("connection", (socket) => {
   console.log("User connected:", socket.id);
 
-  socket.on("join", (roomId) => {
-    const room = io.sockets.adapter.rooms.get(roomId);
-    const numClients = room ? room.size : 0;
-
-    console.log(`Room ${roomId} has ${numClients} client(s) before join`);
-
+  if (waitingSocket === null) {
+    // No one waiting, add current socket to waiting queue
+    waitingSocket = socket;
+    socket.emit("waiting");
+    console.log(`Socket ${socket.id} is waiting for a partner`);
+  } else {
+    // Pair found, create a room for both
+    const roomId = uuidv4();
     socket.join(roomId);
-    console.log(`${socket.id} joined room ${roomId}`);
+    waitingSocket.join(roomId);
 
-    const shouldOffer = numClients === 1;
-    socket.emit("initiate", shouldOffer);
-  });
+    console.log(`Paired sockets ${socket.id} and ${waitingSocket.id} in room ${roomId}`);
+
+    // Notify both sockets which one should start offer
+    // Assign offerer role arbitrarily (e.g., waitingSocket starts)
+    waitingSocket.emit("initiate", true, roomId);
+    socket.emit("initiate", false, roomId);
+
+    // Clear waiting queue
+    waitingSocket = null;
+  }
 
   socket.on("signal", ({ roomId, data }) => {
-    console.log(`Relaying signal in room ${roomId}`);
     socket.to(roomId).emit("signal", data);
   });
 
   socket.on("disconnect", () => {
     console.log("User disconnected:", socket.id);
+    // If the disconnected socket was waiting, clear queue
+    if (waitingSocket && waitingSocket.id === socket.id) {
+      waitingSocket = null;
+    }
   });
 });
 
-// Start the server
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
