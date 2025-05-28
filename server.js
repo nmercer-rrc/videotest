@@ -11,51 +11,55 @@ const io = new Server(server, {
 });
 
 app.use(express.static(path.join(__dirname, "public")));
+
 app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "public/index.html"));
 });
 
-let waitingSocket = null;
+const waitingQueue = [];
 
 io.on("connection", (socket) => {
   console.log("User connected:", socket.id);
 
-  if (waitingSocket === null) {
-    // No one waiting, add current socket to waiting queue
-    waitingSocket = socket;
-    socket.emit("waiting");
-    console.log(`Socket ${socket.id} is waiting for a partner`);
-  } else {
-    // Pair found, create a room for both
-    const roomId = uuidv4();
-    socket.join(roomId);
-    waitingSocket.join(roomId);
+  socket.on("ready", () => {
+    if (waitingQueue.length > 0) {
+      const partner = waitingQueue.shift();
+      const roomId = uuidv4();
+      socket.join(roomId);
+      partner.join(roomId);
 
-    console.log(`Paired sockets ${socket.id} and ${waitingSocket.id} in room ${roomId}`);
+      socket.roomId = roomId;
+      partner.roomId = roomId;
 
-    // Notify both sockets which one should start offer
-    // Assign offerer role arbitrarily (e.g., waitingSocket starts)
-    waitingSocket.emit("initiate", true, roomId);
-    socket.emit("initiate", false, roomId);
+      console.log(`Paired sockets ${socket.id} and ${partner.id} in room ${roomId}`);
 
-    // Clear waiting queue
-    waitingSocket = null;
-  }
+      socket.emit("partner-ready");
+      partner.emit("partner-ready");
+    } else {
+      waitingQueue.push(socket);
+      console.log(`Socket ${socket.id} is waiting for a partner`);
+    }
+  });
 
-  socket.on("signal", ({ roomId, data }) => {
-    socket.to(roomId).emit("signal", data);
+  socket.on("signal", (data) => {
+    if (socket.roomId) {
+      socket.to(socket.roomId).emit("signal", data);
+    }
   });
 
   socket.on("disconnect", () => {
     console.log("User disconnected:", socket.id);
-    // If the disconnected socket was waiting, clear queue
-    if (waitingSocket && waitingSocket.id === socket.id) {
-      waitingSocket = null;
+    if (socket.roomId) {
+      socket.to(socket.roomId).emit("partner-disconnected");
+    }
+    const index = waitingQueue.indexOf(socket);
+    if (index !== -1) {
+      waitingQueue.splice(index, 1);
     }
   });
 });
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 8080;
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });

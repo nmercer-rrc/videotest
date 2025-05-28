@@ -1,83 +1,76 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Auto-Paired WebRTC Video Chat</title>
+  <title>Simple WebRTC + Socket.IO</title>
 </head>
 <body>
   <h1>Video Chat</h1>
   <video id="local" autoplay muted playsinline></video>
   <video id="remote" autoplay playsinline></video>
-  <div id="status">Connecting...</div>
-
   <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
   <script>
     const socket = io();
 
     const localVideo = document.getElementById("local");
     const remoteVideo = document.getElementById("remote");
-    const statusDiv = document.getElementById("status");
 
-    let roomId = null;
-    let isOfferer = false;
-    let peer = null;
-
-    socket.on("waiting", () => {
-      statusDiv.textContent = "Waiting for a partner to connect...";
+    let localStream;
+    const peer = new RTCPeerConnection({
+      iceServers: [
+        { urls: ["stun:us-turn10.xirsys.com"] },
+        {
+          urls: [
+            "turn:us-turn10.xirsys.com:80?transport=udp",
+            "turn:us-turn10.xirsys.com:3478?transport=udp",
+            "turn:us-turn10.xirsys.com:80?transport=tcp",
+            "turn:us-turn10.xirsys.com:3478?transport=tcp",
+            "turns:us-turn10.xirsys.com:443?transport=tcp",
+            "turns:us-turn10.xirsys.com:5349?transport=tcp"
+          ],
+          username: "ajuTdzWJRWrSvhiza7IQPxJx1iim7cbtCK6hHKxYHbFXue09snoTTzj-9spp6I_4AAAAAGg3PsZubWVyY2VyLXJyYw==",
+          credential: "d3a90968-3be3-11f0-9067-0242ac140004"
+        }
+      ]
     });
 
-    socket.on("initiate", async (offerer, room) => {
-      roomId = room;
-      isOfferer = offerer;
-      statusDiv.textContent = "Partner found! Setting up call...";
+    peer.onicecandidate = ({ candidate }) => {
+      if (candidate) {
+        socket.emit("signal", { candidate });
+      }
+    };
 
-      peer = new RTCPeerConnection();
+    peer.ontrack = (event) => {
+      remoteVideo.srcObject = event.streams[0];
+    };
 
-      // Exchange ICE candidates
-      peer.onicecandidate = ({ candidate }) => {
-        if (candidate) socket.emit("signal", { roomId, data: { candidate } });
-      };
-
-      // Remote stream
-      peer.ontrack = (e) => {
-        remoteVideo.srcObject = e.streams[0];
-      };
-
-      // Get local media
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+    navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then(stream => {
+      localStream = stream;
       localVideo.srcObject = stream;
       stream.getTracks().forEach(track => peer.addTrack(track, stream));
-
-      if (isOfferer) {
-        // Create offer
-        const offer = await peer.createOffer();
-        await peer.setLocalDescription(offer);
-        socket.emit("signal", { roomId, data: { offer } });
-      }
+      socket.emit("ready");
     });
 
-    socket.on("signal", async (data) => {
-      if (!peer) return;
+    socket.on("partner-ready", async () => {
+      const offer = await peer.createOffer();
+      await peer.setLocalDescription(offer);
+      socket.emit("signal", { offer });
+    });
 
+    socket.on("signal", async data => {
       if (data.offer) {
         await peer.setRemoteDescription(new RTCSessionDescription(data.offer));
         const answer = await peer.createAnswer();
         await peer.setLocalDescription(answer);
-        socket.emit("signal", { roomId, data: { answer } });
+        socket.emit("signal", { answer });
       } else if (data.answer) {
         await peer.setRemoteDescription(new RTCSessionDescription(data.answer));
       } else if (data.candidate) {
         try {
           await peer.addIceCandidate(data.candidate);
         } catch (err) {
-          console.error("Error adding ICE candidate", err);
+          console.error("Error adding ICE candidate:", err);
         }
       }
-    });
-
-    socket.on("disconnect", () => {
-      statusDiv.textContent = "Disconnected from server.";
-      if (peer) peer.close();
-      peer = null;
     });
   </script>
 </body>
