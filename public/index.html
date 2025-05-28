@@ -10,7 +10,7 @@
   <video id="remote" autoplay playsinline></video>
   <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
   <script>
-    const socket = io("videotest-production-e5f5.up.railway.app");
+    const socket = io("https://videotest-production-e5f5.up.railway.app");
     const roomId = "demo-room";
     socket.emit("join", roomId);
 
