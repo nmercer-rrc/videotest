@@ -1,20 +1,22 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Simple WebRTC + Socket.IO</title>
+  <title>WebRTC Video Chat</title>
 </head>
 <body>
   <h1>Video Chat</h1>
   <video id="local" autoplay muted playsinline></video>
   <video id="remote" autoplay playsinline></video>
+
   <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
   <script>
     const socket = io();
-
     const localVideo = document.getElementById("local");
     const remoteVideo = document.getElementById("remote");
 
     let localStream;
+    let isInitiator = false;
+
     const peer = new RTCPeerConnection({
       iceServers: [
         { urls: ["stun:us-turn10.xirsys.com"] },
@@ -43,6 +45,7 @@
       remoteVideo.srcObject = event.streams[0];
     };
 
+    // Get user media
     navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then(stream => {
       localStream = stream;
       localVideo.srcObject = stream;
@@ -50,7 +53,8 @@
       socket.emit("ready");
     });
 
-    socket.on("partner-ready", async () => {
+    socket.on("initiate", async () => {
+      isInitiator = true;
       const offer = await peer.createOffer();
       await peer.setLocalDescription(offer);
       socket.emit("signal", { offer });
