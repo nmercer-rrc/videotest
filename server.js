@@ -9,15 +9,15 @@ const io = new Server(server, {
   cors: { origin: "*" },
 });
 
-// Serve static files from 'public' folder
+// Serve static files from the 'public' directory
 app.use(express.static(path.join(__dirname, "public")));
 
-// Serve index.html explicitly at root
+// Fallback route to serve index.html
 app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "public/index.html"));
 });
 
-// Socket.IO connection handling
+// Handle socket connections
 io.on("connection", (socket) => {
   console.log("User connected:", socket.id);
 
@@ -25,14 +25,17 @@ io.on("connection", (socket) => {
     const room = io.sockets.adapter.rooms.get(roomId);
     const numClients = room ? room.size : 0;
 
+    console.log(`Room ${roomId} has ${numClients} client(s) before join`);
+
     socket.join(roomId);
     console.log(`${socket.id} joined room ${roomId}`);
 
-    // Tell client whether to be the offerer
-    socket.emit("initiate", numClients === 2);
+    const shouldOffer = numClients === 1;
+    socket.emit("initiate", shouldOffer);
   });
 
   socket.on("signal", ({ roomId, data }) => {
+    console.log(`Relaying signal in room ${roomId}`);
     socket.to(roomId).emit("signal", data);
   });
 
@@ -41,6 +44,7 @@ io.on("connection", (socket) => {
   });
 });
 
+// Start the server
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);

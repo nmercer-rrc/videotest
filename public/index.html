@@ -10,67 +10,85 @@
 
   <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
   <script>
-    const socket = io("https://videotest-production-e5f5.up.railway.app"); // include https
+    const socket = io("https://videotest-production-e5f5.up.railway.app");
     const roomId = "demo-room";
-    const peer = new RTCPeerConnection();
-    let isOfferer = false;
 
     const localVideo = document.getElementById("local");
     const remoteVideo = document.getElementById("remote");
+    let localStream;
+    let peer;
+    let isOfferer = false;
 
-    socket.on("connect", () => {
-      socket.emit("join", roomId);
-    });
+    socket.emit("join", roomId);
 
     socket.on("initiate", (shouldOffer) => {
+      console.log("Initiate received. Should offer:", shouldOffer);
       isOfferer = shouldOffer;
       startMedia();
     });
 
     function startMedia() {
       navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then((stream) => {
+        localStream = stream;
         localVideo.srcObject = stream;
+
+        peer = new RTCPeerConnection({
+          iceServers: [
+            { urls: "stun:stun.l.google.com:19302" }
+          ]
+        });
+
         stream.getTracks().forEach(track => peer.addTrack(track, stream));
+
+        peer.ontrack = (event) => {
+          console.log("Remote stream received");
+          remoteVideo.srcObject = event.streams[0];
+        };
+
+        peer.onicecandidate = ({ candidate }) => {
+          console.log("Sending ICE candidate:", candidate);
+          if (candidate) {
+            socket.emit("signal", { roomId, data: { candidate } });
+          }
+        };
 
         if (isOfferer) {
           peer.createOffer().then(offer => {
-            peer.setLocalDescription(offer);
-            socket.emit("signal", { roomId, data: { offer } });
-          });
+            return peer.setLocalDescription(offer);
+          }).then(() => {
+            socket.emit("signal", { roomId, data: { offer: peer.localDescription } });
+          }).catch(console.error);
         }
+      }).catch(err => {
+        console.error("Error accessing media devices.", err);
       });
     }
 
-    peer.onicecandidate = ({ candidate }) => {
-      if (candidate) {
-        socket.emit("signal", { roomId, data: { candidate } });
-      }
-    };
-
-    peer.ontrack = (event) => {
-      remoteVideo.srcObject = event.streams[0];
-    };
-
     socket.on("signal", async (data) => {
+      console.log("Received signal:", data);
+
       if (data.offer) {
-        await peer.setRemoteDescription(new RTCSessionDescription(data.offer));
-
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-        localVideo.srcObject = stream;
-        stream.getTracks().forEach(track => peer.addTrack(track, stream));
-
-        const answer = await peer.createAnswer();
-        await peer.setLocalDescription(answer);
-        socket.emit("signal", { roomId, data: { answer } });
+        console.log("Received offer");
+        peer.setRemoteDescription(new RTCSessionDescription(data.offer)).then(() => {
+          return navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        }).then((stream) => {
+          localStream = stream;
+          localVideo.srcObject = stream;
+          stream.getTracks().forEach(track => peer.addTrack(track, stream));
+          return peer.createAnswer();
+        }).then((answer) => {
+          return peer.setLocalDescription(answer);
+        }).then(() => {
+          socket.emit("signal", { roomId, data: { answer: peer.localDescription } });
+        }).catch(console.error);
 
       } else if (data.answer) {
-        await peer.setRemoteDescription(new RTCSessionDescription(data.answer));
+        console.log("Received answer");
+        peer.setRemoteDescription(new RTCSessionDescription(data.answer)).catch(console.error);
+
       } else if (data.candidate) {
-        try {
-          await peer.addIceCandidate(data.candidate);
-        } catch (err) {
-          console.error("Error adding ICE candidate", err);
-        }
+        console.log("Adding ICE candidate");
+        peer.addIceCandidate(new RTCIceCandidate(data.candidate)).catch(console.error);
       }
     });
   </script>
